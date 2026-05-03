@@ -93,7 +93,6 @@ This fork rewrites the Vanilla-only subsystems against native 3.3.5a APIs. If yo
 | Question | Answer |
 |---|---|
 | **Click-casting doesn't work on some bindings in combat** | Bindings of type Menu / Role / Macro / Script / Multi still fall through to the legacy insecure dispatcher and produce "Interface action failed" inside combat. Use Spell / Target / Assist / Follow bindings for combat-critical actions. The legacy dispatcher gets cleaned up once the secure path has soaked in real raid use. |
-| **My Priest doesn't have Dispel Magic / Cure Disease** | On Bronzebeard, base Priests must purchase Dispel Magic and Cure Disease from the trainer rather than learning them automatically — that's an Ascension ruleset choice, not a Puppeteer issue. Once you train them (or pick up an equivalent dispel via a Mystic Enchantment), Puppeteer detects them and colorizes the matching debuff types. |
 | **Adding a binding crashes or doesn't update in combat** | The settings UI is blocked from opening (and auto-closes) inside combat to prevent secure-attribute taint. Edit bindings between pulls. |
 
 </details>
