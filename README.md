@@ -101,6 +101,4 @@ This fork rewrites the Vanilla-only subsystems against native 3.3.5a APIs. If yo
 
 - [i2ichardt](https://github.com/i2ichardt) — original HealersMate author
 - [OldManAlpha](https://github.com/OldManAlpha) — Puppeteer rewrite (Vanilla 1.12)
-- @blondieart (Discord) — original art (top of upstream README)
-- [Shagu](https://github.com/shagu) — utility functions and addon-development reference material
 - The Ascension and 3.3.5a private-server addon community for the secure-template, click-cast, and oUF reference implementations that informed this port
