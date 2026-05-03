@@ -3,7 +3,7 @@
 ## Title: Puppeteer
 ## Notes: Unit frames addon tailored for healers (3.3.5a / Ascension port)
 ## Author: OldManAlpha, Richard Truax(i2ichardt); Ascension port by mhaslinsky
-## SavedVariables: PTGlobalOptions, PTHealCache, PTPlayerHealCache, PTRoleCache
+## SavedVariables: PTGlobalOptions, PTHealCache, PTPlayerHealCache, PTRoleCache, PTBugLog
 ## SavedVariablesPerCharacter: PTBindings, PTOptions
 
 libs\LibStub\LibStub.lua
@@ -17,6 +17,10 @@ libs\LibStub\LibStub.lua
 # custom-unit subsystem; native 3.3.5a focus is single-slot. Multi-focus deferred
 # to v2.1; native single-slot focus restoration is part of that work.
 libs\Util.lua
+
+# BugReporter installs seterrorhandler() at file-load time to catch errors during the
+# rest of addon init. Loaded right after Util so its dependency surface is just PTUtil.
+core\BugReporter.lua
 
 locale\Locale.lua
 locale\esES.lua

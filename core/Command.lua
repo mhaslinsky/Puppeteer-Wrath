@@ -68,6 +68,16 @@ SlashCmdList["PUPPETEER"] = function(args)
         SendChatMessage("Puppeteer -- Assigned Roles", chatType)
         SendChatMessage("Tanks("..table.getn(tanks).."): "..table.concat(tanks, ", "), chatType)
         SendChatMessage("Healers("..table.getn(healers).."): "..table.concat(healers, ", "), chatType)
+    elseif args == "bug" then
+        if PTBugReporter then
+            PTBugReporter.OpenDialog()
+        else
+            Puppeteer.Info("Bug reporter is not available.")
+        end
+    elseif args == "bug clear" then
+        if PTBugReporter then
+            PTBugReporter.ClearErrors()
+        end
     elseif args == "silent" then
         PTGlobalOptions.ShowLoadMessage = not PTGlobalOptions.ShowLoadMessage
         Puppeteer.Info("Load message is now "..(PTGlobalOptions.ShowLoadMessage and 
@@ -82,6 +92,8 @@ SlashCmdList["PUPPETEER"] = function(args)
         DEFAULT_CHAT_FRAME:AddMessage(PTUtil.Colorize("/pt hide", 0, 0.8, 0).." -- Hides the UI")
         DEFAULT_CHAT_FRAME:AddMessage(PTUtil.Colorize("/pt roles", 0, 0.8, 0).." -- Broadcast the roles you have assigned to chat")
         DEFAULT_CHAT_FRAME:AddMessage(PTUtil.Colorize("/pt silent", 0, 0.8, 0).." -- Turns off/on message when addon loads")
+        DEFAULT_CHAT_FRAME:AddMessage(PTUtil.Colorize("/pt bug", 0, 0.8, 0).." -- Opens a bug-report dialog with copy-pastable context for filing a GitHub issue")
+        DEFAULT_CHAT_FRAME:AddMessage(PTUtil.Colorize("/pt bug clear", 0, 0.8, 0).." -- Clears the captured Puppeteer error log")
     elseif args == "" then
         PTSettingsGui.TabFrame:Show()
     else
