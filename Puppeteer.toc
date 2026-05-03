@@ -1,8 +1,9 @@
 ## Interface: 30300
-## Version: 2.1.0
+## Version: 2.1.1
 ## Title: Puppeteer
 ## Notes: Unit frames addon tailored for healers (3.3.5a / Ascension port)
 ## Author: OldManAlpha, Richard Truax(i2ichardt); Ascension port by mhaslinsky
+## X-GitHub: mhaslinsky/Puppeteer-Wrath
 ## SavedVariables: PTGlobalOptions, PTHealCache, PTPlayerHealCache, PTRoleCache, PTBugLog
 ## SavedVariablesPerCharacter: PTBindings, PTOptions
 
