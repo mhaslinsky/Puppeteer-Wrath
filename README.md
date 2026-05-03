@@ -68,7 +68,7 @@ This fork rewrites the Vanilla-only subsystems against native 3.3.5a APIs. If yo
 
 - **No SuperWoW / UnitXP SP3 / Nampower / VanillaUtils.** Those mods don't exist on 3.3.5a; the features that depended on them are either rebuilt natively (auras, aggro, click-cast) or removed.
 - **Heal prediction is self-cast only.** The 3.3.5a `UNIT_SPELLCAST_*` events don't carry the cast's target, so we can only predict your own heals. A learned-amount cache (`PTHealCache` / `PTPlayerHealCache`) populates from the combat log.
-- **Multi-focus is removed.** Native 3.3.5a `focus` is single-slot; the SuperWoW-only `focus2..N` token system is gone. Single-slot native focus restoration is on the v2.1 list.
+- **Multi-focus is removed.** Native 3.3.5a `focus` is single-slot; the SuperWoW-only `focus2..N` token system is gone. Single-slot native focus restoration is on the post-v2.1 list.
 - **Distance / line-of-sight indicators are removed.** Both relied on UnitXP SP3.
 - **Click-cast is now secure.** Per-frame `SecureActionButton` overlays and hidden `SetBindingClick`-routed keybind buttons replace the old insecure dispatcher, so clicks and hover-key-casts work in combat without triggering taint.
 
@@ -81,8 +81,9 @@ This fork rewrites the Vanilla-only subsystems against native 3.3.5a APIs. If yo
 
 ## Roadmap
 
-- **v2.0 (current)** — port to 3.3.5a complete. Stable for healing on Bronzebeard.
-- **v2.1** — single-slot native focus restoration; `/pt bug` capture-and-paste workflow for opening GitHub issues; possible workarounds for predicting other players' incoming heals; classless-realm support (Area 52 / CoA) once a real user surfaces there.
+- **v2.0** — port to 3.3.5a complete. Stable for healing on Bronzebeard.
+- **v2.1 (current)** — `/pt bug` bug-report capture + GitHub-issue-paste workflow.
+- **v2.2 / later** — single-slot native focus restoration; possible workarounds for predicting other players' incoming heals; classless-realm support (Area 52 / CoA) once a real user surfaces there.
 - **v3.0** — styling system redesign. The bespoke unit-frame implementation will be replaced with vendored [oUF](https://github.com/oUF-wow/oUF) (from the ElvUI-WotLK source), token-based theming, [LibSharedMedia-3.0](https://www.wowace.com/projects/libsharedmedia-3-0) integration, and AceDB-3.0 persistence. The current 770-line `ProfileManager.lua` preset literal and the per-property Customize tab go away in favor of declarative themes with diff-based overrides. Parked until v2.0 has accumulated real raid use.
 
 ## Reporting bugs
@@ -96,7 +97,7 @@ Open an issue at **https://github.com/mhaslinsky/Puppeteer-Wrath/issues/new**. U
 - Steps to reproduce
 - Any Lua error text from `Logs/FrameXML.log` if applicable
 
-A `/pt bug` slash command that pre-fills this template with a captured Puppeteer-only error log is on the v2.1 list — until then, the manual template above gets us the same info.
+**Or use `/pt bug`** (added in v2.1) — opens a dialog with the build, character, group state, loaded-addon list, and any captured Puppeteer error stacks pre-filled in markdown. Click *Select all* → Ctrl-C → paste into the GitHub issue form. Errors are captured automatically (chained off any existing error handler so BugSack / !ImprovedErrorFrame keep working) and persist across `/reload` in the `PTBugLog` SavedVariable. `/pt bug clear` empties the captured-error buffer.
 
 ## FAQ
 
