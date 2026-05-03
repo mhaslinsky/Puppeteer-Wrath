@@ -82,8 +82,21 @@ This fork rewrites the Vanilla-only subsystems against native 3.3.5a APIs. If yo
 ## Roadmap
 
 - **v2.0 (current)** — port to 3.3.5a complete. Stable for healing on Bronzebeard.
-- **v2.1** — single-slot native focus restoration; possible workarounds for predicting other players' incoming heals; classless-realm support (Area 52 / CoA) once a real user surfaces there.
+- **v2.1** — single-slot native focus restoration; `/pt bug` capture-and-paste workflow for opening GitHub issues; possible workarounds for predicting other players' incoming heals; classless-realm support (Area 52 / CoA) once a real user surfaces there.
 - **v3.0** — styling system redesign. The bespoke unit-frame implementation will be replaced with vendored [oUF](https://github.com/oUF-wow/oUF) (from the ElvUI-WotLK source), token-based theming, [LibSharedMedia-3.0](https://www.wowace.com/projects/libsharedmedia-3-0) integration, and AceDB-3.0 persistence. The current 770-line `ProfileManager.lua` preset literal and the per-property Customize tab go away in favor of declarative themes with diff-based overrides. Parked until v2.0 has accumulated real raid use.
+
+## Reporting bugs
+
+Open an issue at **https://github.com/mhaslinsky/Puppeteer-Wrath/issues/new**. Useful info to include:
+
+- Your Puppeteer version (`/pt → About`)
+- WoW build (run `/console getbuildinfo`)
+- Realm + character (class / level)
+- Other addons enabled — especially other unit-frame addons (Cell, Healbot, ElvUI's UF module)
+- Steps to reproduce
+- Any Lua error text from `Logs/FrameXML.log` if applicable
+
+A `/pt bug` slash command that pre-fills this template with a captured Puppeteer-only error log is on the v2.1 list — until then, the manual template above gets us the same info.
 
 ## FAQ
 
