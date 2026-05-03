@@ -998,7 +998,7 @@ function CreateTab_About()
             12)
         :SetPoint("TOP", container, "TOP", 0, -80)
 
-    CreateLinkEditbox(container, "https://github.com/mhaslinsky/Puppeteer-Ascension")
+    CreateLinkEditbox(container, "https://github.com/mhaslinsky/Puppeteer-Wrath")
         :SetPoint("TOP", text, "BOTTOM", 0, -10)
         :SetSize(300, 20)
 end
