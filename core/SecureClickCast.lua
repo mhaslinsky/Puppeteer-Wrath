@@ -1,16 +1,37 @@
 -- Phase 5 / Slice 1: secure click-cast + secure keybind dispatch (Wrath 3.3.5a).
 --
 -- Architecture (read .research/BINDINGS-AND-CLICK-CAST.md before editing):
---   1. Per-frame overlay: every Puppeteer unit frame gets a SecureActionButtonTemplate
---      child that overlays the body. Carries unit="<frame's unit>" and per-modifier
---      type/spell attributes. Direct clicks dispatch through WoW's secure code, no
---      taint, works in combat. The unit attribute also makes WoW set its `mouseover`
---      token when the cursor enters this button -- which is what the keybind path needs.
+--   1. Per-frame overlay: every Puppeteer unit frame gets a button inheriting both
+--      SecureActionButtonTemplate (for click-cast) and SecureHandlerEnterLeaveTemplate
+--      (for hover-driven keybind override). Carries unit="<frame's unit>" and per-
+--      modifier type/spell attributes. Direct clicks dispatch through WoW's secure
+--      code, no taint, works in combat. The unit attribute also makes WoW set its
+--      `mouseover` token when the cursor enters this button -- which is what the
+--      keybind path needs.
 --   2. Hidden keybind buttons: one or more SecureActionButtonTemplate buttons carry
---      static [@mouseover] macrotext per modifier slot. SetBindingClick(key, btn, click)
---      routes a key press to a virtual click on the button, OOC-only. The macro's
---      [@mouseover] resolves at click-time against whatever frame the cursor is over.
---      No per-hover attribute writes; combat-safe by construction.
+--      static [@mouseover] macrotext per modifier slot. They're the *target* of
+--      hover-scoped overrides installed by the per-frame overlay's _onenter snippet.
+--      The macro's [@mouseover] resolves at click-time against whatever frame the
+--      cursor is over.
+--   3. Binding registry: a SecureFrameTemplate Frame whose attributes describe the
+--      current set of (key, button-name, click) triples. Each per-frame overlay holds
+--      a FrameRef to it; the _onenter snippet walks the registry and calls
+--      self:SetBindingClick() for each entry. _onleave calls self:ClearBindings().
+--      Both run in WoW's restricted secure env -- not subject to combat lockdown --
+--      so hover toggling works mid-fight. (The registry MUST inherit a secure
+--      template; a plain Frame gives "Invalid frame handle" inside the snippet,
+--      because only secure-template frames get a snippet-handle wrapper.) Lua-side
+--      install/clear via SetOverrideBindingClick was tried first and bounced off
+--      combat protection ("prevented the call of the secure function
+--      'ClearOverrideBindings()'"); the snippet pattern is the same approach
+--      Clique-on-Wrath uses.
+--
+-- Why overrides instead of permanent SetBindingClick: SetBindingClick replaces the
+-- key's base binding for the whole session, which made the action bar's keybind
+-- label disappear (e.g. Numpad7 = PW:Fortitude on bar, also bound in Puppeteer ->
+-- bar label vanished even though the cast still worked). The hover-scoped override
+-- layers on top of the base binding without clobbering it; ClearBindings on
+-- _onleave restores the bar's label and dispatch instantly.
 --
 -- Slice 1 scope: SPELL bindings only. Other binding types (ACTION/MACRO/SCRIPT/MULTI)
 -- fall through to the existing insecure path -- protected ones won't work in combat,
@@ -49,11 +70,33 @@ local MAX_VARIANTS_PER_BUTTON = 5
 
 local keybindButtons = {}    -- ordered list of secure keybind buttons
 local keyToSlot = {}         -- key name -> {button=<frame>, variant=1..5, hasBinding=bool}
-local lastBoundKeys = {}     -- set of keys we previously SetBindingClick'd so we know what to release on refresh
-local originalBindings = {}  -- key name -> binding action that was in effect before our SetBindingClick (for restore)
 local overlaysByFrame = {}   -- unitFrame -> overlay button
+local bindingRegistry        -- plain Frame; (key, btnName, click) triples as attrs. Read by snippets.
 local pendingRefreshOnRegen = false
 local initialized = false
+
+
+-- ---------- Restricted-env snippets ----------
+-- Run inside WoW's secure environment when the overlay is hovered/unhovered.
+-- 'self' is the overlay button (SecureHandlerEnterLeaveTemplate). The bindings
+-- it installs are owned by the overlay, so self:ClearBindings() on leave
+-- removes only those (does not touch other addons' bindings).
+local SNIPPET_ONENTER = [[
+    local r = self:GetFrameRef("registry")
+    if not r then return end
+    local n = r:GetAttribute("keyCount") or 0
+    for i = 1, n do
+        local key = r:GetAttribute("key"..i)
+        local btn = r:GetAttribute("btnName"..i)
+        local click = r:GetAttribute("click"..i)
+        if key and btn and click then
+            self:SetBindingClick(true, key, btn, click)
+        end
+    end
+]]
+local SNIPPET_ONLEAVE = [[
+    self:ClearBindings()
+]]
 
 
 -- ---------- Feature flag ----------
@@ -76,19 +119,30 @@ local SECURE_ACTIONS = {
     ["Follow"] = "follow",
 }
 
--- Build a macro line for one binding targeting [@mouseover<,help/harm>]. Returns
--- nil if the binding can't be expressed via macrotext (Menu, Role*, etc.).
--- modifierClause is "" or ",help,nodead" or ",harm,nodead".
-local function bindingToMacroLine(binding, modifierClause)
+-- Build a macro line for one binding. Tries [@mouseover] first; falls through to
+-- the player's current target when no valid mouseover exists. The fall-through is
+-- mostly belt-and-suspenders -- normally the override binding is only installed
+-- while hovering a Puppeteer frame, so [@mouseover] resolves cleanly. But because
+-- ClearOverrideBindings is combat-protected on 3.3.5a, the override can persist
+-- past hover-leave during combat; the fall-through means a keypress in that state
+-- still casts on the current target instead of failing silently. Returns nil if the
+-- binding can't be expressed via macrotext (Menu, Role*, etc.).
+-- targetClause is ""/",help,nodead"/",harm,nodead".
+-- fallbackClause is ""/"help,nodead"/"harm,nodead" (no leading comma; standalone).
+local function bindingToMacroLine(binding, targetClause, fallbackClause)
     if not binding or not binding.Type or not binding.Data or binding.Data == "" then
         return nil
     end
+    local conditional = "[@mouseover" .. targetClause .. "]"
+    if fallbackClause and fallbackClause ~= "" then
+        conditional = conditional .. "[" .. fallbackClause .. "]"
+    end
     if binding.Type == "SPELL" then
-        return "/cast [@mouseover" .. modifierClause .. "] " .. binding.Data
+        return "/cast " .. conditional .. " " .. binding.Data
     elseif binding.Type == "ACTION" then
         local action = SECURE_ACTIONS[binding.Data]
         if not action then return nil end
-        return "/" .. action .. " [@mouseover" .. modifierClause .. "]"
+        return "/" .. action .. " " .. conditional
     end
     return nil
 end
@@ -100,8 +154,8 @@ local function buildMacrotextForSlot(modifierName, buttonName)
     local hostile = GetBinding("Hostile", modifierName, buttonName)
 
     local lines = {}
-    local fLine = bindingToMacroLine(friendly, ",help,nodead")
-    local hLine = bindingToMacroLine(hostile, ",harm,nodead")
+    local fLine = bindingToMacroLine(friendly, ",help,nodead", "help,nodead")
+    local hLine = bindingToMacroLine(hostile, ",harm,nodead", "harm,nodead")
     if fLine then table.insert(lines, fLine) end
     if hLine then table.insert(lines, hLine) end
 
@@ -207,14 +261,34 @@ function SecureClickCast.AttachOverlay(unitFrame)
     local existing = unitFrame.button
     if not existing then return end
 
-    local overlay = CreateFrame("Button", nil, existing, "SecureActionButtonTemplate")
+    -- Dual template: Action for click-cast, EnterLeave for the snippet-driven
+    -- hover override. Setting attributes / FrameRef / snippets on this button
+    -- is combat-protected, but AttachOverlay runs at addon-load (OOC).
+    local overlay = CreateFrame("Button", nil, existing,
+        "SecureActionButtonTemplate,SecureHandlerEnterLeaveTemplate")
     overlay:SetAllPoints(existing)
     overlay:SetFrameLevel(existing:GetFrameLevel() + 1)
     overlay:RegisterForClicks("AnyDown", "AnyUp")
     overlay:EnableMouse(true)
 
-    forwardScript(overlay, existing, "OnEnter")
-    forwardScript(overlay, existing, "OnLeave")
+    -- Wire snippet-based hover override.
+    if bindingRegistry then
+        overlay:SetFrameRef("registry", bindingRegistry)
+    end
+    overlay:SetAttribute("_onenter", SNIPPET_ONENTER)
+    overlay:SetAttribute("_onleave", SNIPPET_ONLEAVE)
+
+    -- Forward OnEnter/OnLeave to the original button's script so PT.Mouseover and
+    -- friends keep updating. HookScript (not SetScript) so we don't clobber the
+    -- SecureHandlerEnterLeaveTemplate's OnEnter wiring that fires the snippet.
+    overlay:HookScript("OnEnter", function()
+        local fn = existing:GetScript("OnEnter")
+        if fn then fn() end
+    end)
+    overlay:HookScript("OnLeave", function()
+        local fn = existing:GetScript("OnLeave")
+        if fn then fn() end
+    end)
     forwardScript(overlay, existing, "OnMouseDown")
     forwardScript(overlay, existing, "OnMouseUp")
 
@@ -305,10 +379,10 @@ local function refreshKeybindAttrs()
     end
 
     -- Write per-(key, modifier) macrotexts. Track which slots actually got at least
-    -- one macrotext so applySetBindingClick can skip keys with no real binding --
-    -- otherwise SetBindingClick on an empty slot shadows the global default for that
-    -- key (e.g. MOUSEWHEELUP -> CAMERAZOOMIN). Bug discovered 2026-05-04.
+    -- one macrotext so syncBindingRegistry can skip keys with no real binding --
+    -- avoids registering empty entries in the snippet's iteration set.
     for keyName, slot in pairs(keyToSlot) do
+        slot.hasBinding = nil
         for _, modName in ipairs(ALL_MODIFIERS) do
             local macro = buildMacrotextForSlot(modName, keyName)
             if macro then
@@ -321,48 +395,34 @@ local function refreshKeybindAttrs()
     end
 end
 
-local function applySetBindingClick()
-    if InCombatLockdown() then
-        pendingRefreshOnRegen = true
-        return
+
+-- ---------- Binding registry ----------
+
+-- Populate bindingRegistry attributes from keyToSlot, in a form the _onenter
+-- snippet iterates over. SetAttribute on a SecureFrameTemplate Frame is combat-
+-- protected, but only-callable-from-RefreshAll which is gated on
+-- InCombatLockdown anyway (refreshKeybindAttrs writes to secure buttons).
+local function syncBindingRegistry()
+    if not bindingRegistry then return end
+
+    -- Wipe the previous range. keyCount is authoritative for old-set size.
+    local prev = bindingRegistry:GetAttribute("keyCount") or 0
+    for i = 1, prev do
+        bindingRegistry:SetAttribute("key" .. i, nil)
+        bindingRegistry:SetAttribute("btnName" .. i, nil)
+        bindingRegistry:SetAttribute("click" .. i, nil)
     end
 
-    local nowBound = {}
+    local i = 0
     for keyName, slot in pairs(keyToSlot) do
         if slot.hasBinding then
-            nowBound[keyName] = true
+            i = i + 1
+            bindingRegistry:SetAttribute("key" .. i, keyName)
+            bindingRegistry:SetAttribute("btnName" .. i, slot.button:GetName())
+            bindingRegistry:SetAttribute("click" .. i, VARIANT_TO_VIRTUAL[slot.variant])
         end
     end
-
-    -- Restore the original binding action on keys we're releasing. SetBinding(key, nil)
-    -- isn't enough -- it clears the runtime entry entirely, leaving the key with no
-    -- binding until /reload reads bindings-cache.wtf again. Instead we snapshot whatever
-    -- was bound before our override (typically the global default like CAMERAZOOMIN) and
-    -- write it back. Same pattern as legacy OverrideBindings.lua:158/182.
-    for keyName in pairs(lastBoundKeys) do
-        if not nowBound[keyName] then
-            local original = originalBindings[keyName]
-            if original and original ~= "" then
-                SetBinding(keyName, original)
-            else
-                SetBinding(keyName, nil)
-            end
-            originalBindings[keyName] = nil
-        end
-    end
-
-    for keyName in pairs(nowBound) do
-        if not lastBoundKeys[keyName] then
-            -- First time binding this key in the current session; snapshot what's there
-            -- before SetBindingClick clobbers it. GetBindingAction returns "" when no
-            -- binding exists, which we treat as nil on restore.
-            originalBindings[keyName] = GetBindingAction(keyName)
-        end
-        local slot = keyToSlot[keyName]
-        SetBindingClick(keyName, slot.button:GetName(), VARIANT_TO_VIRTUAL[slot.variant])
-    end
-
-    lastBoundKeys = nowBound
+    bindingRegistry:SetAttribute("keyCount", i)
 end
 
 
@@ -376,7 +436,7 @@ function SecureClickCast.RefreshAll()
     end
     rebuildKeyAssignments()
     refreshKeybindAttrs()
-    applySetBindingClick()
+    syncBindingRegistry()
     for unitFrame, _ in pairs(overlaysByFrame) do
         SecureClickCast.RefreshOverlay(unitFrame)
     end
@@ -390,12 +450,18 @@ local function onRegenEnabled()
     if pendingRefreshOnRegen then
         SecureClickCast.RefreshAll()
     end
-    -- Flush deferred Show/Hide on unit-frame group containers. Once the secure
-    -- overlay is parented under them, container:Show/Hide() is combat-protected
-    -- and was being silently dropped (or producing taint warnings) until now.
+    -- Flush deferred Show/Hide on unit-frame group containers AND individual unit
+    -- frames. Once the secure overlay is parented under either, container:Show/Hide()
+    -- is combat-protected and was being silently dropped (or producing taint warnings)
+    -- until now. Per-frame flush added 2026-05-04 after a 5-man combat surface report.
     if Puppeteer.UnitFrameGroups then
         for _, group in pairs(Puppeteer.UnitFrameGroups) do
             if group.FlushPendingShown then group:FlushPendingShown() end
+        end
+    end
+    if Puppeteer.AllUnitFrames then
+        for _, ui in ipairs(Puppeteer.AllUnitFrames) do
+            if ui.FlushPendingShown then ui:FlushPendingShown() end
         end
     end
 end
@@ -404,6 +470,16 @@ function SecureClickCast.Init()
     if initialized then return end
     initialized = true
     if not SecureClickCast.IsEnabled() then return end
+
+    -- Must inherit a secure template so the restricted-env snippet can
+    -- dereference its FrameRef handle. Plain Frames give "Invalid frame handle"
+    -- on r:GetAttribute(...) inside the _onenter snippet -- the snippet handle
+    -- wrapper only exists for secure-template frames. SetAttribute writes on
+    -- this frame ARE combat-protected as a result, but RefreshAll gates on
+    -- InCombatLockdown anyway (refreshKeybindAttrs writes to secure buttons).
+    bindingRegistry = CreateFrame("Frame", "PuppeteerKeybindRegistry", UIParent,
+        "SecureFrameTemplate")
+    bindingRegistry:Hide()
 
     -- One-time event registration via the addon's frame-based dispatcher.
     local f = CreateFrame("Frame")

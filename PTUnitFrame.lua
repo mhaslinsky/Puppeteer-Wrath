@@ -140,15 +140,36 @@ function PTUnitFrame:GetContainer()
 end
 
 function PTUnitFrame:Show()
+    -- Phase 5: secure overlay descendants make container Show/Hide protected in combat.
+    -- Defer until PLAYER_REGEN_ENABLED via pendingShow/Hide; SecureClickCast flushes us.
+    if InCombatLockdown() then
+        self.pendingShow = true
+        self.pendingHide = nil
+        return
+    end
+    self.pendingShow = nil
     self.container:Show()
     self.rootContainer:Show()
     self:UpdateAll()
 end
 
 function PTUnitFrame:Hide()
-    if not self:IsFake() then
-        self.container:Hide()
-        self.rootContainer:Hide()
+    if self:IsFake() then return end
+    if InCombatLockdown() then
+        self.pendingHide = true
+        self.pendingShow = nil
+        return
+    end
+    self.pendingHide = nil
+    self.container:Hide()
+    self.rootContainer:Hide()
+end
+
+function PTUnitFrame:FlushPendingShown()
+    if self.pendingShow then
+        self:Show()
+    elseif self.pendingHide then
+        self:Hide()
     end
 end
 
@@ -842,6 +863,11 @@ function PTUnitFrame:AllocateAura()
     local duration = CreateFrame("Cooldown", nil, frame, "CooldownFrameTemplate")
     duration.noCooldownCount = true -- Suppress OmniCC overlay; we draw our own seconds text
     duration:SetAlpha(0.8)
+    -- Buff convention: icon mostly bright, dark wedge grows as time elapses. The native
+    -- CooldownFrameTemplate default is the cooldown convention (mostly-dark = mostly-remaining),
+    -- which on a fresh long buff like PW:Fortitude renders the icon almost fully shadowed.
+    -- Vanilla 1.12 / SuperWoW used SetSequenceTime(0, 1000 - progress*1000) -- the reversed form.
+    duration:SetReverse(true)
 
     local durationOverlayFrame = CreateFrame("Frame", nil, frame)
     durationOverlayFrame:SetFrameLevel(durationOverlayFrame:GetFrameLevel() + 1)
@@ -1022,6 +1048,11 @@ function PTUnitFrame:ReleaseAuras()
         end
 
         aura.durationText:SetSeconds(nil)
+        -- Explicitly clear the cooldown state in addition to hiding. Phase 3 dropped this
+        -- reset (the SuperWoW path had `CooldownFrame_SetTimer(aura.duration, 0, 0, 0)`)
+        -- and stale state from a previously-recycled icon could leak into the next buff,
+        -- producing the "intermittent inverted swipe" symptom.
+        CooldownFrame_SetTimer(aura.duration, 0, 0, 0)
         aura.duration:Hide()
 
         table.insert(self.auraIconPool, aura)
