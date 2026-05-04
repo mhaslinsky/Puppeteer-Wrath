@@ -133,6 +133,9 @@ function PTUnitFrameGroup:FlushPendingShown()
     elseif self.pendingHide then
         self:Hide()
     end
+    if self.pendingPositionUpdate then
+        self:UpdateUIPositions()
+    end
 end
 
 -- Used while moving frames to avoid the lag while moving over other toplevel frames
@@ -290,6 +293,16 @@ function PTUnitFrameGroup:ApplyProfile()
 end
 
 function PTUnitFrameGroup:UpdateUIPositions()
+    -- Phase 5: rootContainer/group container have secure overlay descendants, so
+    -- SetPoint/SetWidth/SetHeight on them is combat-protected. EvaluateShown can
+    -- fire mid-combat (e.g. PLAYER_TARGET_CHANGED -> Target group re-evaluates),
+    -- so defer the whole layout pass; FlushPendingShown re-runs on PLAYER_REGEN_ENABLED.
+    if InCombatLockdown() then
+        self.pendingPositionUpdate = true
+        return
+    end
+    self.pendingPositionUpdate = nil
+
     local profile = self:GetProfile()
     local profileWidth = profile.Width
     local profileHeight = profile:GetHeight()

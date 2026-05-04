@@ -42,7 +42,7 @@ function InitOverrideBindingsMapping()
         end
     end
 
-    -- Phase 5: when secure click-cast is on, leave key dispatch to SetBindingClick.
+    -- Phase 5: when secure click-cast is on, leave key dispatch to SetOverrideBindingClick.
     if (SecureClickCast and SecureClickCast.IsEnabled()) then
         return
     end
@@ -140,9 +140,9 @@ end
 -- End of UPDATE_BINDINGS mitigation
 
 function ApplyOverrideBindings()
-    -- Phase 5 / Slice 1: secure click-cast owns key dispatch via SetBindingClick.
-    -- Skip the legacy SetBinding flow entirely when secure is enabled, otherwise
-    -- the per-hover SetBinding calls clobber the secure SetBindingClick wiring.
+    -- Phase 5 / Slice 1: secure click-cast owns key dispatch via hover-scoped
+    -- SetOverrideBindingClick. Skip the legacy SetBinding flow entirely when secure
+    -- is enabled, otherwise the per-hover SetBinding calls clobber the secure wiring.
     if (SecureClickCast and SecureClickCast.IsEnabled()) then
         return
     end
