@@ -268,7 +268,12 @@ function SecureClickCast.AttachOverlay(unitFrame)
         "SecureActionButtonTemplate,SecureHandlerEnterLeaveTemplate")
     overlay:SetAllPoints(existing)
     overlay:SetFrameLevel(existing:GetFrameLevel() + 1)
-    overlay:RegisterForClicks("AnyDown", "AnyUp")
+    -- Up-only. AnyDown+AnyUp made SecureActionButton dispatch the same action
+    -- twice per click: spell cast on key-down succeeded, the key-up retry hit
+    -- the just-started cooldown and surfaced "Spell is not ready yet" (issue
+    -- #14). RMB-on-empty-bind also opened the legacy unit dropdown on down
+    -- and closed it again on up (issue #15). Matches Clique's convention.
+    overlay:RegisterForClicks("AnyUp")
     overlay:EnableMouse(true)
 
     -- Wire snippet-based hover override.
