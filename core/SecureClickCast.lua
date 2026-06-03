@@ -240,7 +240,10 @@ local function getSecureMacroBody(name)
     if not idx or idx == 0 then return nil end
     local _, _, body = GetMacroInfo(idx)
     if not body or body == "" then return nil end
-    for line in string.gfind(body .. "\n", "([^\n]*)\n") do
+    -- string.gmatch (not gfind). gfind was removed in Lua 5.1; Ascension's
+    -- 3.3.5a runtime doesn't keep the alias and throws at runtime, which
+    -- silently broke every MACRO binding's secure-attr write.
+    for line in string.gmatch(body .. "\n", "([^\n]*)\n") do
         local lower = string.lower(line)
         for _, pat in ipairs(NON_SECURE_LINE_PATTERNS) do
             if string.find(lower, pat) then return nil end
