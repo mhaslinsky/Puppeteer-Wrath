@@ -127,6 +127,33 @@ local function applyClickEdgeToOverlays()
     end
 end
 
+-- Diagnostic: dump every non-empty secure attribute on the overlay for the
+-- given unit frame. Lets us tell whether writeUnitAttrs actually persisted
+-- the macrotext for a given binding when secure dispatch unexpectedly falls
+-- through to the legacy path.
+function SecureClickCast.DebugDumpOverlay(unitFrame)
+    local o = overlaysByFrame[unitFrame]
+    if not o then
+        DEFAULT_CHAT_FRAME:AddMessage("[PT] no overlay registered for that frame")
+        return
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("[PT] overlay unit=" .. tostring(o:GetAttribute("unit")))
+    for _, modName in ipairs(ALL_MODIFIERS) do
+        local prefix = MODIFIER_PREFIXES[modName]
+        for variant = 1, MAX_VARIANTS_PER_BUTTON do
+            local t = o:GetAttribute(prefix .. "type" .. variant)
+            if t then
+                local detail = "type=" .. t
+                local sp = o:GetAttribute(prefix .. "spell" .. variant)
+                if sp then detail = detail .. " spell=" .. sp end
+                local mt = o:GetAttribute(prefix .. "macrotext" .. variant)
+                if mt then detail = detail .. " mt=<" .. string.gsub(mt, "\n", "|") .. ">" end
+                DEFAULT_CHAT_FRAME:AddMessage("[PT] " .. modName .. " v" .. variant .. ": " .. detail)
+            end
+        end
+    end
+end
+
 function SecureClickCast.RefreshClicks()
     -- RegisterForClicks on a SecureActionButtonTemplate is combat-protected;
     -- silently dropped (or taints) inside lockdown. Defer to PLAYER_REGEN_
