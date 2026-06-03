@@ -107,6 +107,41 @@ function SecureClickCast.IsEnabled()
     return PTGlobalOptions.UseSecureClickCast
 end
 
+-- "AnyUp" / "AnyDown" derived from PTOptions.CastWhen. Single edge per click
+-- to avoid the AnyDown+AnyUp double-dispatch (#14, #15); the user's CastWhen
+-- preference picks which edge.
+function SecureClickCast.GetClickEdge()
+    if PTOptions and PTOptions.CastWhen == "Mouse Down" then
+        return "AnyDown"
+    end
+    return "AnyUp"
+end
+
+-- Re-register the click edge on every existing overlay. Read by both the
+-- CastWhen settings dropdown (live propagation) and RefreshAll (so a refresh
+-- deferred by combat picks up the current CastWhen on flush).
+local function applyClickEdgeToOverlays()
+    local edge = SecureClickCast.GetClickEdge()
+    for _, overlay in pairs(overlaysByFrame) do
+        overlay:RegisterForClicks(edge)
+    end
+end
+
+function SecureClickCast.RefreshClicks()
+    -- RegisterForClicks on a SecureActionButtonTemplate is combat-protected;
+    -- silently dropped (or taints) inside lockdown. Defer to PLAYER_REGEN_
+    -- ENABLED via the existing pending flag; RefreshAll's flush at the end
+    -- of combat invokes applyClickEdgeToOverlays, so the edge update lands
+    -- without /reload. Settings panel auto-closes on PLAYER_REGEN_DISABLED
+    -- (gui/Settings.lua), but this guard covers the race where the dropdown
+    -- click lands on the same frame combat begins.
+    if InCombatLockdown() then
+        pendingRefreshOnRegen = true
+        return
+    end
+    applyClickEdgeToOverlays()
+end
+
 
 -- ---------- Binding translation ----------
 
@@ -268,7 +303,13 @@ function SecureClickCast.AttachOverlay(unitFrame)
         "SecureActionButtonTemplate,SecureHandlerEnterLeaveTemplate")
     overlay:SetAllPoints(existing)
     overlay:SetFrameLevel(existing:GetFrameLevel() + 1)
-    overlay:RegisterForClicks("AnyDown", "AnyUp")
+    -- Single edge per click. AnyDown+AnyUp made SecureActionButton dispatch
+    -- the same action twice per click: spell cast on key-down succeeded, the
+    -- key-up retry hit the just-started cooldown and surfaced "Spell is not
+    -- ready yet" (#14). RMB-on-empty-bind also opened the legacy unit
+    -- dropdown on down and closed it on up (#15). Edge follows PTOptions.
+    -- CastWhen so a user who chose "Mouse Down" still gets that behavior.
+    overlay:RegisterForClicks(SecureClickCast.GetClickEdge())
     overlay:EnableMouse(true)
 
     -- Wire snippet-based hover override.
@@ -440,6 +481,10 @@ function SecureClickCast.RefreshAll()
     for unitFrame, _ in pairs(overlaysByFrame) do
         SecureClickCast.RefreshOverlay(unitFrame)
     end
+    -- Also re-register click edges. RefreshClicks defers when called in
+    -- combat by flipping pendingRefreshOnRegen; this is where that deferred
+    -- write actually lands.
+    applyClickEdgeToOverlays()
     pendingRefreshOnRegen = false
 end
 
