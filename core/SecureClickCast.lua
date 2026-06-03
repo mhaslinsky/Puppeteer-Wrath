@@ -229,7 +229,11 @@ end
 -- A macro containing any of these can't be made secure as a whole, so we
 -- fall through to the legacy path (works OOC, "Interface action failed" in
 -- combat). Keeps us from half-running a multi-line macro.
-local NON_SECURE_LINE_PATTERNS = {"^%s*/script", "^%s*/run", "^%s*/click"}
+--
+-- /click is *not* in the list: it's a stock secure slash command
+-- (SecureCmdList["CLICK"]) that clicks a named button and runs fine inside
+-- macrotext. Only Lua-execution slashes (/script, /run) belong here.
+local NON_SECURE_LINE_PATTERNS = {"^%s*/script", "^%s*/run"}
 
 -- Fetch a saved macro's body by name. Returns nil if the macro doesn't exist
 -- or contains a non-secure command. Macro index lookup matches util.RunMacro
@@ -272,16 +276,28 @@ local function bindingToFrameSpec(binding, unit)
         if not unit then return nil end
         local body = getSecureMacroBody(binding.Data)
         if not body then return nil end
-        -- Temp-target dance in macrotext form: /target the frame's unit if
-        -- it exists, run the saved macro body against it, restore the
-        -- previous target. Mirrors RunTargetedAction's behavior on the
-        -- legacy path but stays entirely inside secure dispatch so it works
-        -- in combat. `[@<unit>,exists]` guards against the unit having
-        -- dropped between attr-refresh and the click.
+        -- Temp-target dance in macrotext form.
+        --   /stopmacro [@<unit>,noexists]: abort if the unit dropped between
+        --     attribute refresh and the click. Without this guard the
+        --     /target line is a no-op and the body would fire against the
+        --     player's current target -- matches the legacy path's
+        --     UnitExists check at Puppeteer.lua's UnitFrame_OnClick.
+        --   /target [@<unit>,exists]: switch to the frame's unit. Same as
+        --     RunTargetedAction's TargetUnit call on the legacy path.
+        --   body: the user's saved macro, now running against <unit>.
+        --   /targetlasttarget: restore previous target -- omitted when
+        --     TargetAfterCasting is set so the new target sticks, matching
+        --     RunTargetedAction's targetAfterCasting branch
+        --     (core/Bindings.lua:452-455).
+        local stickTarget = binding.TargetAfterCasting or
+            (binding.TargetAfterCasting == nil and PTOptions and PTOptions.TargetAfterCasting)
         local macrotext =
+            "/stopmacro [@" .. unit .. ",noexists]\n" ..
             "/target [@" .. unit .. ",exists]\n" ..
-            body .. "\n" ..
-            "/targetlasttarget"
+            body
+        if not stickTarget then
+            macrotext = macrotext .. "\n/targetlasttarget"
+        end
         return {type = "macro", macrotext = macrotext}
     end
     return nil
@@ -613,10 +629,16 @@ function SecureClickCast.Init()
     -- other addons (notably ElvUI action bars) re-applying their bindings
     -- after Puppeteer's load, so re-run once everything has settled.
     f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    -- UPDATE_MACROS fires when the player edits a saved macro. MACRO
+    -- bindings bake the body into macrotext at refresh time; without a
+    -- re-refresh on edit the secure overlay keeps dispatching the old text.
+    -- RefreshAll itself is combat-gated (defers via pendingRefreshOnRegen),
+    -- so an edit during combat is picked up at PLAYER_REGEN_ENABLED.
+    f:RegisterEvent("UPDATE_MACROS")
     f:SetScript("OnEvent", function()
         if event == "PLAYER_REGEN_ENABLED" then
             onRegenEnabled()
-        elseif event == "PLAYER_ENTERING_WORLD" then
+        elseif event == "PLAYER_ENTERING_WORLD" or event == "UPDATE_MACROS" then
             SecureClickCast.RefreshAll()
         end
     end)
