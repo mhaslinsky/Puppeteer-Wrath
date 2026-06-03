@@ -471,7 +471,34 @@ function GetItemCount(itemName)
 end
 
 function IsValidMacro(name)
-    return GetMacroIndexByName(name) ~= 0
+    local idx = GetMacroIndexByName(name)
+    return idx and idx ~= 0
+end
+
+-- Try to execute a macro body without taint. /script and /run lines can be
+-- run via loadstring directly (pure Lua, no secure functions touched);
+-- anything else needs RunMacroText (which is itself secure-protected and
+-- taints when called from addon Lua). Returns true iff every line was
+-- handled by loadstring -- the caller can then skip RunMacroText entirely
+-- and avoid the taint warning.
+local function runScriptLinesOnly(body)
+    for line in string.gmatch(body .. "\n", "([^\n]*)\n") do
+        if line ~= "" and not string.find(line, "^%s*$") then
+            local code = string.match(line, "^%s*/script%s+(.*)$")
+                      or string.match(line, "^%s*/run%s+(.*)$")
+            if not code then return false end
+        end
+    end
+    -- All non-blank lines are /script or /run -- safe to run via loadstring.
+    for line in string.gmatch(body .. "\n", "([^\n]*)\n") do
+        local code = string.match(line, "^%s*/script%s+(.*)$")
+                  or string.match(line, "^%s*/run%s+(.*)$")
+        if code then
+            local fn, err = loadstring(code)
+            if fn then pcall(fn) end
+        end
+    end
+    return true
 end
 
 function RunMacro(name, target)
@@ -482,10 +509,20 @@ function RunMacro(name, target)
         _G.PT_MacroTarget = target
     end
     local _, _, body = GetMacroInfo(GetMacroIndexByName(name))
-    local commands = SplitString(body, "\n")
-    for i = 1, getn(commands) do
-        ChatFrameEditBox:SetText(commands[i])
-        ChatEdit_SendText(ChatFrameEditBox)
+    -- Originally walked ChatFrameEditBox:SetText / ChatEdit_SendText line by
+    -- line. ChatFrameEditBox does not exist on Ascension's 3.3.5a client
+    -- (replaced by per-chat-window editboxes), so every legacy-path macro
+    -- click threw "attempt to index global 'ChatFrameEditBox' (a nil value)"
+    -- -- root cause of #12. RunMacroText is the native 3.3.5a entrypoint
+    -- for macro body text and handles multi-line internally, but it's
+    -- secure-protected so calling it from addon Lua taints. For macros that
+    -- are ENTIRELY /script or /run lines (rejected from the secure path
+    -- because they need Lua execution), run them via loadstring instead --
+    -- no protected functions touched, no taint warning.
+    if body then
+        if not runScriptLinesOnly(body) then
+            RunMacroText(body)
+        end
     end
     if target then
         _G.PT_MacroTarget = nil

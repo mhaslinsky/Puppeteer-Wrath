@@ -127,6 +127,33 @@ local function applyClickEdgeToOverlays()
     end
 end
 
+-- Diagnostic: dump every non-empty secure attribute on the overlay for the
+-- given unit frame. Lets us tell whether writeUnitAttrs actually persisted
+-- the macrotext for a given binding when secure dispatch unexpectedly falls
+-- through to the legacy path.
+function SecureClickCast.DebugDumpOverlay(unitFrame)
+    local o = overlaysByFrame[unitFrame]
+    if not o then
+        DEFAULT_CHAT_FRAME:AddMessage("[PT] no overlay registered for that frame")
+        return
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("[PT] overlay unit=" .. tostring(o:GetAttribute("unit")))
+    for _, modName in ipairs(ALL_MODIFIERS) do
+        local prefix = MODIFIER_PREFIXES[modName]
+        for variant = 1, MAX_VARIANTS_PER_BUTTON do
+            local t = o:GetAttribute(prefix .. "type" .. variant)
+            if t then
+                local detail = "type=" .. t
+                local sp = o:GetAttribute(prefix .. "spell" .. variant)
+                if sp then detail = detail .. " spell=" .. sp end
+                local mt = o:GetAttribute(prefix .. "macrotext" .. variant)
+                if mt then detail = detail .. " mt=<" .. string.gsub(mt, "\n", "|") .. ">" end
+                DEFAULT_CHAT_FRAME:AddMessage("[PT] " .. modName .. " v" .. variant .. ": " .. detail)
+            end
+        end
+    end
+end
+
 function SecureClickCast.RefreshClicks()
     -- RegisterForClicks on a SecureActionButtonTemplate is combat-protected;
     -- silently dropped (or taints) inside lockdown. Defer to PLAYER_REGEN_
@@ -198,11 +225,45 @@ local function buildMacrotextForSlot(modifierName, buttonName)
     return table.concat(lines, "\n")
 end
 
+-- Lines that require Lua execution: secure macrotext silently skips them.
+-- A macro containing any of these can't be made secure as a whole, so we
+-- fall through to the legacy path (works OOC, "Interface action failed" in
+-- combat). Keeps us from half-running a multi-line macro.
+--
+-- /click is *not* in the list: it's a stock secure slash command
+-- (SecureCmdList["CLICK"]) that clicks a named button and runs fine inside
+-- macrotext. Only Lua-execution slashes (/script, /run) belong here.
+local NON_SECURE_LINE_PATTERNS = {"^%s*/script", "^%s*/run"}
+
+-- Fetch a saved macro's body by name. Returns nil if the macro doesn't exist
+-- or contains a non-secure command. Macro index lookup matches util.RunMacro
+-- so the secure path resolves the same macro the legacy path would.
+local function getSecureMacroBody(name)
+    if not name or name == "" then return nil end
+    local idx = GetMacroIndexByName(name)
+    if not idx or idx == 0 then return nil end
+    local _, _, body = GetMacroInfo(idx)
+    if not body or body == "" then return nil end
+    -- string.gmatch (not gfind). gfind was removed in Lua 5.1; Ascension's
+    -- 3.3.5a runtime doesn't keep the alias and throws at runtime, which
+    -- silently broke every MACRO binding's secure-attr write.
+    for line in string.gmatch(body .. "\n", "([^\n]*)\n") do
+        local lower = string.lower(line)
+        for _, pat in ipairs(NON_SECURE_LINE_PATTERNS) do
+            if string.find(lower, pat) then return nil end
+        end
+    end
+    return body
+end
+
 -- For a per-frame overlay (unit baked in via the unit attribute), translate one
 -- binding into a {type=..., spell=...} or {type=..., macrotext=...} spec to be
 -- written to type<N> / spell<N> / macrotext<N> attributes. Returns nil if the
 -- binding can't be securely dispatched (caller should fall through to insecure).
-local function bindingToFrameSpec(binding)
+-- `unit` is the frame's unit token; used to wrap MACRO bindings in a /target
+-- dance so the saved macro fires against that unit regardless of the player's
+-- current target.
+local function bindingToFrameSpec(binding, unit)
     if not binding or not binding.Type or not binding.Data or binding.Data == "" then
         return nil
     end
@@ -211,6 +272,33 @@ local function bindingToFrameSpec(binding)
     elseif binding.Type == "ACTION" then
         local action = SECURE_ACTIONS[binding.Data]
         if action then return {type = action} end
+    elseif binding.Type == "MACRO" then
+        if not unit then return nil end
+        local body = getSecureMacroBody(binding.Data)
+        if not body then return nil end
+        -- Temp-target dance in macrotext form.
+        --   /stopmacro [@<unit>,noexists]: abort if the unit dropped between
+        --     attribute refresh and the click. Without this guard the
+        --     /target line is a no-op and the body would fire against the
+        --     player's current target -- matches the legacy path's
+        --     UnitExists check at Puppeteer.lua's UnitFrame_OnClick.
+        --   /target [@<unit>,exists]: switch to the frame's unit. Same as
+        --     RunTargetedAction's TargetUnit call on the legacy path.
+        --   body: the user's saved macro, now running against <unit>.
+        --   /targetlasttarget: restore previous target -- omitted when
+        --     TargetAfterCasting is set so the new target sticks, matching
+        --     RunTargetedAction's targetAfterCasting branch
+        --     (core/Bindings.lua:452-455).
+        local stickTarget = binding.TargetAfterCasting or
+            (binding.TargetAfterCasting == nil and PTOptions and PTOptions.TargetAfterCasting)
+        local macrotext =
+            "/stopmacro [@" .. unit .. ",noexists]\n" ..
+            "/target [@" .. unit .. ",exists]\n" ..
+            body
+        if not stickTarget then
+            macrotext = macrotext .. "\n/targetlasttarget"
+        end
+        return {type = "macro", macrotext = macrotext}
     end
     return nil
 end
@@ -227,19 +315,23 @@ local function forwardScript(overlay, original, scriptName)
     end)
 end
 
--- Wipe and rewrite the (unit, type<N>, spell<N>) attribute set for the
--- per-frame overlay. Bindings whose Type can't be securely dispatched (Menu,
--- Role*, Script, Macro, Multi) leave their slot empty here; the OnClick
--- fallback hook routes those clicks through to the legacy insecure handler.
+-- Wipe and rewrite the (unit, type<N>, spell<N>, macrotext<N>) attribute set
+-- for the per-frame overlay. Bindings whose Type can't be securely dispatched
+-- (Menu, Role*, Script, Multi -- and MACRO with non-secure body) leave their
+-- slot empty here; the OnClick fallback hook routes those clicks through to
+-- the legacy insecure handler.
 local function writeUnitAttrs(btn, unit, isHostile)
     btn:SetAttribute("unit", unit)
 
-    -- Wipe stale attrs across all 8 modifiers x 5 variants.
+    -- Wipe stale attrs across all 8 modifiers x 5 variants. macrotext is
+    -- new in v2.1.5 (MACRO bindings on the secure path) -- wipe even on
+    -- pre-2.1.5 cached overlays so a removed macro binding doesn't linger.
     for _, modName in ipairs(ALL_MODIFIERS) do
         local prefix = MODIFIER_PREFIXES[modName]
         for variant = 1, MAX_VARIANTS_PER_BUTTON do
             btn:SetAttribute(prefix .. "type" .. variant, nil)
             btn:SetAttribute(prefix .. "spell" .. variant, nil)
+            btn:SetAttribute(prefix .. "macrotext" .. variant, nil)
         end
     end
 
@@ -247,11 +339,14 @@ local function writeUnitAttrs(btn, unit, isHostile)
     for _, modName in ipairs(ALL_MODIFIERS) do
         local prefix = MODIFIER_PREFIXES[modName]
         for buttonName, variant in pairs(MOUSE_BUTTON_TO_VARIANT) do
-            local spec = bindingToFrameSpec(GetBinding(side, modName, buttonName))
+            local spec = bindingToFrameSpec(GetBinding(side, modName, buttonName), unit)
             if spec then
                 btn:SetAttribute(prefix .. "type" .. variant, spec.type)
                 if spec.spell then
                     btn:SetAttribute(prefix .. "spell" .. variant, spec.spell)
+                end
+                if spec.macrotext then
+                    btn:SetAttribute(prefix .. "macrotext" .. variant, spec.macrotext)
                 end
             end
         end
@@ -534,10 +629,16 @@ function SecureClickCast.Init()
     -- other addons (notably ElvUI action bars) re-applying their bindings
     -- after Puppeteer's load, so re-run once everything has settled.
     f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    -- UPDATE_MACROS fires when the player edits a saved macro. MACRO
+    -- bindings bake the body into macrotext at refresh time; without a
+    -- re-refresh on edit the secure overlay keeps dispatching the old text.
+    -- RefreshAll itself is combat-gated (defers via pendingRefreshOnRegen),
+    -- so an edit during combat is picked up at PLAYER_REGEN_ENABLED.
+    f:RegisterEvent("UPDATE_MACROS")
     f:SetScript("OnEvent", function()
         if event == "PLAYER_REGEN_ENABLED" then
             onRegenEnabled()
-        elseif event == "PLAYER_ENTERING_WORLD" then
+        elseif event == "PLAYER_ENTERING_WORLD" or event == "UPDATE_MACROS" then
             SecureClickCast.RefreshAll()
         end
     end)
