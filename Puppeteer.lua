@@ -261,6 +261,7 @@ function OnAddonLoaded()
     end
     AssignedRoles = _G.PTRoleCache[GetRealmName()]
     PruneAssignedRoles()
+    if InitRoleInference then InitRoleInference() end
 
     -- Phase 4: PTCustomUnitUpdater frame removed (SuperWoW-only custom-unit GUID polling).
     PTUnit.CreateCaches()
