@@ -471,7 +471,8 @@ function GetItemCount(itemName)
 end
 
 function IsValidMacro(name)
-    return GetMacroIndexByName(name) ~= 0
+    local idx = GetMacroIndexByName(name)
+    return idx and idx ~= 0
 end
 
 function RunMacro(name, target)
@@ -482,11 +483,13 @@ function RunMacro(name, target)
         _G.PT_MacroTarget = target
     end
     local _, _, body = GetMacroInfo(GetMacroIndexByName(name))
-    local commands = SplitString(body, "\n")
-    for i = 1, getn(commands) do
-        ChatFrameEditBox:SetText(commands[i])
-        ChatEdit_SendText(ChatFrameEditBox)
-    end
+    -- Previously walked ChatFrameEditBox:SetText / ChatEdit_SendText line by
+    -- line. ChatFrameEditBox does not exist on Ascension's 3.3.5a client
+    -- (replaced by per-chat-window editboxes), so every legacy-path macro
+    -- click threw "attempt to index global 'ChatFrameEditBox' (a nil value)"
+    -- -- root cause of #12. RunMacroText is the native 3.3.5a entrypoint
+    -- that accepts macro body text directly and handles multi-line internally.
+    if body then RunMacroText(body) end
     if target then
         _G.PT_MacroTarget = nil
     end
