@@ -609,6 +609,21 @@ function SaveFramePositions()
     end
 end
 
+-- Snap one frame group to UIParent CENTER so a frame that's been dragged
+-- off-screen (or whose stored anchor isn't visible at current resolution)
+-- can be recovered without /reload or a full settings wipe.
+function ResetFramePosition(frameName)
+    local group = Puppeteer.UnitFrameGroups[frameName]
+    if not group then return end
+    local container = group:GetContainer()
+    container:ClearAllPoints()
+    container:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    if not PTOptions.FrameOptions[frameName] then
+        PTOptions.FrameOptions[frameName] = {}
+    end
+    PTOptions.FrameOptions[frameName].Position = {"CENTER", 0, 0}
+end
+
 function IsExperimentEnabled(experiment)
     return PTOptions.Experiments[experiment] or PTGlobalOptions.Experiments[experiment]
 end

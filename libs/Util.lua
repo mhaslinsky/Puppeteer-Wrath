@@ -1085,30 +1085,37 @@ end
 
 -- Keeps the frame at the current position, while modifying the anchor point
 function ConvertAnchor(frame, anchor)
+    -- Save format mirrors the anchor on both sides (e.g. CENTER->CENTER), so
+    -- the load side at PTUnitFrameGroup.lua's Initialize can do
+    -- SetPoint(anchor, UIParent, anchor, x, y) and the offset is always read
+    -- from the matching point on UIParent. Previously this anchored to
+    -- UIParent's TOPLEFT regardless of `anchor`, which made the saved x/y
+    -- only correct under the (also-then-hardcoded) TOPLEFT-relative load.
+    local screenW, screenH = GetScreenWidth(), GetScreenHeight()
     local leftX, rightX, topY, bottomY = frame:GetLeft(), frame:GetRight(), frame:GetTop(), frame:GetBottom()
     local centerX, centerY = frame:GetCenter()
-    local x, y
+    local fx, fy, px, py
     if anchor == "TOPLEFT" then
-        x, y = leftX, topY
+        fx, fy, px, py = leftX, topY, 0, screenH
     elseif anchor == "TOPRIGHT" then
-        x, y = rightX, topY
+        fx, fy, px, py = rightX, topY, screenW, screenH
     elseif anchor == "BOTTOMLEFT" then
-        x, y = leftX, bottomY
+        fx, fy, px, py = leftX, bottomY, 0, 0
     elseif anchor == "BOTTOMRIGHT" then
-        x, y = rightX, bottomY
+        fx, fy, px, py = rightX, bottomY, screenW, 0
     elseif anchor == "TOP" then
-        x, y = centerX, topY
+        fx, fy, px, py = centerX, topY, screenW / 2, screenH
     elseif anchor == "BOTTOM" then
-        x, y = centerX, bottomY
+        fx, fy, px, py = centerX, bottomY, screenW / 2, 0
     elseif anchor == "LEFT" then
-        x, y = leftX, centerY
+        fx, fy, px, py = leftX, centerY, 0, screenH / 2
     elseif anchor == "RIGHT" then
-        x, y = rightX, centerY
+        fx, fy, px, py = rightX, centerY, screenW, screenH / 2
     elseif anchor == "CENTER" then
-        x, y = centerX, centerY
+        fx, fy, px, py = centerX, centerY, screenW / 2, screenH / 2
     end
     frame:ClearAllPoints()
-    frame:SetPoint(anchor, UIParent, "TOPLEFT", x, y - GetScreenHeight())
+    frame:SetPoint(anchor, UIParent, anchor, fx - px, fy - py)
 end
 
 function GetPowerType(unit)

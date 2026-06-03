@@ -604,7 +604,7 @@ function CreateTab_Customize()
     local frameStyleContainer = PTGuiLib.Get("container", container)
         :SetSimpleBackground()
         :SetPoint("TOPLEFT", container, "TOPLEFT", 5, -26)
-        :SetPoint("BOTTOMRIGHT", container, "TOPRIGHT", -5, -155)
+        :SetPoint("BOTTOMRIGHT", container, "TOPRIGHT", -5, -185)
     local layout = NewLabeledColumnLayout(frameStyleContainer, {100, 340, 175}, -25, 5)
 
     local frameSettingsText = CreateLabel(frameStyleContainer, "Frame Group Settings")
@@ -766,6 +766,20 @@ function CreateTab_Customize()
         end)
     layout:layoutComponent(hideFrameCheckbox)
     HideFrameCheckbox = hideFrameCheckbox
+
+    -- Recover-from-off-screen control. Snaps the currently-selected frame
+    -- back to UIParent center; user then drags it where they want. Anchored
+    -- manually to the panel's bottom-right (rather than via the column
+    -- layout) so we don't fight the labeled-checkbox stack above.
+    local resetPosButton = PTGuiLib.Get("button", frameStyleContainer)
+        :SetSize(110, 22)
+        :SetText("Reset Position")
+        :OnClick(function()
+            PuppeteerSettings.ResetFramePosition(frameDropdown:GetText())
+        end)
+    resetPosButton:ClearAllPoints()
+    resetPosButton:SetPoint("BOTTOMRIGHT", frameStyleContainer, "BOTTOMRIGHT", -40, 6)
+    ResetPosButton = resetPosButton
 
     UpdateFrameOptions()
 

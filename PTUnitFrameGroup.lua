@@ -162,8 +162,14 @@ function PTUnitFrameGroup:Initialize()
     container:SetUserPlaced(false)
     self:ApplyToplevel()
     container:ClearAllPoints()
+    -- Use the saved anchor on both sides of SetPoint. Previously hardcoded
+    -- UIParent's anchor to "TOPLEFT" regardless of saved anchor, which sent
+    -- frames dragged into a "CENTER"-anchored position off-screen on next
+    -- load because the offset was measured from UIParent's bottom-left
+    -- instead of its center.
     local anchor, x, y = PuppeteerSettings.GetFramePosition(self.name)
-    container:SetPoint(anchor or "TOPLEFT", UIParent, "TOPLEFT", x or 100, y or -100)
+    local point = anchor or "TOPLEFT"
+    container:SetPoint(point, UIParent, point, x or 100, y or -100)
     container:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8"})
     container:SetBackdropColor(0, 0, 0, self:GetProfile().BackgroundOpacity / 100)
 
@@ -232,6 +238,9 @@ function PTUnitFrameGroup:Initialize()
             container:StopMovingOrSizing()
             self:ApplyToplevel()
             util.ConvertAnchor(container, PuppeteerSettings.GetFramePosition(self.name))
+            -- Persist now; PLAYER_LOGOUT-only save means /reload silently
+            -- discards drags otherwise.
+            PuppeteerSettings.SaveFramePositions()
             return
         end
 
@@ -244,6 +253,7 @@ function PTUnitFrameGroup:Initialize()
             local gc = group:GetContainer()
             util.ConvertAnchor(gc, PuppeteerSettings.GetFramePosition(group.name))
         end
+        PuppeteerSettings.SaveFramePositions()
         -- Prevent container from potentially blocking mouse by setting it back to 0 size
         moveContainer:SetWidth(0)
         moveContainer:SetHeight(0)
