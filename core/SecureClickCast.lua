@@ -117,14 +117,29 @@ function SecureClickCast.GetClickEdge()
     return "AnyUp"
 end
 
--- Re-register the click edge on every existing overlay. Called from the
--- CastWhen settings dropdown so live preference changes propagate without
--- /reload.
-function SecureClickCast.RefreshClicks()
+-- Re-register the click edge on every existing overlay. Read by both the
+-- CastWhen settings dropdown (live propagation) and RefreshAll (so a refresh
+-- deferred by combat picks up the current CastWhen on flush).
+local function applyClickEdgeToOverlays()
     local edge = SecureClickCast.GetClickEdge()
     for _, overlay in pairs(overlaysByFrame) do
         overlay:RegisterForClicks(edge)
     end
+end
+
+function SecureClickCast.RefreshClicks()
+    -- RegisterForClicks on a SecureActionButtonTemplate is combat-protected;
+    -- silently dropped (or taints) inside lockdown. Defer to PLAYER_REGEN_
+    -- ENABLED via the existing pending flag; RefreshAll's flush at the end
+    -- of combat invokes applyClickEdgeToOverlays, so the edge update lands
+    -- without /reload. Settings panel auto-closes on PLAYER_REGEN_DISABLED
+    -- (gui/Settings.lua), but this guard covers the race where the dropdown
+    -- click lands on the same frame combat begins.
+    if InCombatLockdown() then
+        pendingRefreshOnRegen = true
+        return
+    end
+    applyClickEdgeToOverlays()
 end
 
 
@@ -466,6 +481,10 @@ function SecureClickCast.RefreshAll()
     for unitFrame, _ in pairs(overlaysByFrame) do
         SecureClickCast.RefreshOverlay(unitFrame)
     end
+    -- Also re-register click edges. RefreshClicks defers when called in
+    -- combat by flipping pendingRefreshOnRegen; this is where that deferred
+    -- write actually lands.
+    applyClickEdgeToOverlays()
     pendingRefreshOnRegen = false
 end
 
