@@ -107,6 +107,26 @@ function SecureClickCast.IsEnabled()
     return PTGlobalOptions.UseSecureClickCast
 end
 
+-- "AnyUp" / "AnyDown" derived from PTOptions.CastWhen. Single edge per click
+-- to avoid the AnyDown+AnyUp double-dispatch (#14, #15); the user's CastWhen
+-- preference picks which edge.
+function SecureClickCast.GetClickEdge()
+    if PTOptions and PTOptions.CastWhen == "Mouse Down" then
+        return "AnyDown"
+    end
+    return "AnyUp"
+end
+
+-- Re-register the click edge on every existing overlay. Called from the
+-- CastWhen settings dropdown so live preference changes propagate without
+-- /reload.
+function SecureClickCast.RefreshClicks()
+    local edge = SecureClickCast.GetClickEdge()
+    for _, overlay in pairs(overlaysByFrame) do
+        overlay:RegisterForClicks(edge)
+    end
+end
+
 
 -- ---------- Binding translation ----------
 
@@ -268,12 +288,13 @@ function SecureClickCast.AttachOverlay(unitFrame)
         "SecureActionButtonTemplate,SecureHandlerEnterLeaveTemplate")
     overlay:SetAllPoints(existing)
     overlay:SetFrameLevel(existing:GetFrameLevel() + 1)
-    -- Up-only. AnyDown+AnyUp made SecureActionButton dispatch the same action
-    -- twice per click: spell cast on key-down succeeded, the key-up retry hit
-    -- the just-started cooldown and surfaced "Spell is not ready yet" (issue
-    -- #14). RMB-on-empty-bind also opened the legacy unit dropdown on down
-    -- and closed it again on up (issue #15). Matches Clique's convention.
-    overlay:RegisterForClicks("AnyUp")
+    -- Single edge per click. AnyDown+AnyUp made SecureActionButton dispatch
+    -- the same action twice per click: spell cast on key-down succeeded, the
+    -- key-up retry hit the just-started cooldown and surfaced "Spell is not
+    -- ready yet" (#14). RMB-on-empty-bind also opened the legacy unit
+    -- dropdown on down and closed it on up (#15). Edge follows PTOptions.
+    -- CastWhen so a user who chose "Mouse Down" still gets that behavior.
+    overlay:RegisterForClicks(SecureClickCast.GetClickEdge())
     overlay:EnableMouse(true)
 
     -- Wire snippet-based hover override.

@@ -433,6 +433,12 @@ function CreateTab_Options_Casting(panel)
         for _, ui in ipairs(Puppeteer.AllUnitFrames) do
             ui:RegisterClicks()
         end
+        -- Propagate to the secure click-cast overlays. Pre-fix, the overlay
+        -- registered for both edges and ignored CastWhen; now it follows the
+        -- preference, so changes need to flow through.
+        if Puppeteer.SecureClickCast and Puppeteer.SecureClickCast.RefreshClicks then
+            Puppeteer.SecureClickCast.RefreshClicks()
+        end
     end)
     factory:dropdown("Cast When (Keys)", "What key state to start casting spells at", "CastWhenKey", {"Key Up", "Key Down"})
     local resSpell = util.ResurrectionSpells[util.GetClass("player")]
