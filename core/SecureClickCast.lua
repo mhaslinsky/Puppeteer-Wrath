@@ -198,11 +198,38 @@ local function buildMacrotextForSlot(modifierName, buttonName)
     return table.concat(lines, "\n")
 end
 
+-- Lines that require Lua execution: secure macrotext silently skips them.
+-- A macro containing any of these can't be made secure as a whole, so we
+-- fall through to the legacy path (works OOC, "Interface action failed" in
+-- combat). Keeps us from half-running a multi-line macro.
+local NON_SECURE_LINE_PATTERNS = {"^%s*/script", "^%s*/run", "^%s*/click"}
+
+-- Fetch a saved macro's body by name. Returns nil if the macro doesn't exist
+-- or contains a non-secure command. Macro index lookup matches util.RunMacro
+-- so the secure path resolves the same macro the legacy path would.
+local function getSecureMacroBody(name)
+    if not name or name == "" then return nil end
+    local idx = GetMacroIndexByName(name)
+    if not idx or idx == 0 then return nil end
+    local _, _, body = GetMacroInfo(idx)
+    if not body or body == "" then return nil end
+    for line in string.gfind(body .. "\n", "([^\n]*)\n") do
+        local lower = string.lower(line)
+        for _, pat in ipairs(NON_SECURE_LINE_PATTERNS) do
+            if string.find(lower, pat) then return nil end
+        end
+    end
+    return body
+end
+
 -- For a per-frame overlay (unit baked in via the unit attribute), translate one
 -- binding into a {type=..., spell=...} or {type=..., macrotext=...} spec to be
 -- written to type<N> / spell<N> / macrotext<N> attributes. Returns nil if the
 -- binding can't be securely dispatched (caller should fall through to insecure).
-local function bindingToFrameSpec(binding)
+-- `unit` is the frame's unit token; used to wrap MACRO bindings in a /target
+-- dance so the saved macro fires against that unit regardless of the player's
+-- current target.
+local function bindingToFrameSpec(binding, unit)
     if not binding or not binding.Type or not binding.Data or binding.Data == "" then
         return nil
     end
@@ -211,6 +238,21 @@ local function bindingToFrameSpec(binding)
     elseif binding.Type == "ACTION" then
         local action = SECURE_ACTIONS[binding.Data]
         if action then return {type = action} end
+    elseif binding.Type == "MACRO" then
+        if not unit then return nil end
+        local body = getSecureMacroBody(binding.Data)
+        if not body then return nil end
+        -- Temp-target dance in macrotext form: /target the frame's unit if
+        -- it exists, run the saved macro body against it, restore the
+        -- previous target. Mirrors RunTargetedAction's behavior on the
+        -- legacy path but stays entirely inside secure dispatch so it works
+        -- in combat. `[@<unit>,exists]` guards against the unit having
+        -- dropped between attr-refresh and the click.
+        local macrotext =
+            "/target [@" .. unit .. ",exists]\n" ..
+            body .. "\n" ..
+            "/targetlasttarget"
+        return {type = "macro", macrotext = macrotext}
     end
     return nil
 end
@@ -227,19 +269,23 @@ local function forwardScript(overlay, original, scriptName)
     end)
 end
 
--- Wipe and rewrite the (unit, type<N>, spell<N>) attribute set for the
--- per-frame overlay. Bindings whose Type can't be securely dispatched (Menu,
--- Role*, Script, Macro, Multi) leave their slot empty here; the OnClick
--- fallback hook routes those clicks through to the legacy insecure handler.
+-- Wipe and rewrite the (unit, type<N>, spell<N>, macrotext<N>) attribute set
+-- for the per-frame overlay. Bindings whose Type can't be securely dispatched
+-- (Menu, Role*, Script, Multi -- and MACRO with non-secure body) leave their
+-- slot empty here; the OnClick fallback hook routes those clicks through to
+-- the legacy insecure handler.
 local function writeUnitAttrs(btn, unit, isHostile)
     btn:SetAttribute("unit", unit)
 
-    -- Wipe stale attrs across all 8 modifiers x 5 variants.
+    -- Wipe stale attrs across all 8 modifiers x 5 variants. macrotext is
+    -- new in v2.1.5 (MACRO bindings on the secure path) -- wipe even on
+    -- pre-2.1.5 cached overlays so a removed macro binding doesn't linger.
     for _, modName in ipairs(ALL_MODIFIERS) do
         local prefix = MODIFIER_PREFIXES[modName]
         for variant = 1, MAX_VARIANTS_PER_BUTTON do
             btn:SetAttribute(prefix .. "type" .. variant, nil)
             btn:SetAttribute(prefix .. "spell" .. variant, nil)
+            btn:SetAttribute(prefix .. "macrotext" .. variant, nil)
         end
     end
 
@@ -247,11 +293,14 @@ local function writeUnitAttrs(btn, unit, isHostile)
     for _, modName in ipairs(ALL_MODIFIERS) do
         local prefix = MODIFIER_PREFIXES[modName]
         for buttonName, variant in pairs(MOUSE_BUTTON_TO_VARIANT) do
-            local spec = bindingToFrameSpec(GetBinding(side, modName, buttonName))
+            local spec = bindingToFrameSpec(GetBinding(side, modName, buttonName), unit)
             if spec then
                 btn:SetAttribute(prefix .. "type" .. variant, spec.type)
                 if spec.spell then
                     btn:SetAttribute(prefix .. "spell" .. variant, spec.spell)
+                end
+                if spec.macrotext then
+                    btn:SetAttribute(prefix .. "macrotext" .. variant, spec.macrotext)
                 end
             end
         end
